@@ -1,0 +1,91 @@
+import numpy as np
+from argparse import ArgumentParser
+import apriltag
+import cv2
+import sys
+import serial
+from pylibfreenect2 import Freenect2, SyncMultiFrameListener
+from pylibfreenect2 import FrameType, Registration, Frame
+from pylibfreenect2 import createConsoleLogger, setGlobalLogger
+from pylibfreenect2 import LoggerLevel
+
+
+ser123=serial.Serial()
+
+
+parser = ArgumentParser(description='test apriltag Python bindings')
+apriltag.add_arguments(parser)
+options = parser.parse_args()
+detector = apriltag.Detector(options)
+
+##################################################################
+try:
+    from pylibfreenect2 import OpenCLPacketPipeline
+    pipeline = OpenCLPacketPipeline()
+except:
+    try:
+        from pylibfreenect2 import OpenGLPacketPipeline
+        pipeline = OpenGLPacketPipeline()
+    except:
+        from pylibfreenect2 import CpuPacketPipeline
+        pipeline = CpuPacketPipeline()
+print("Packet pipeline:", type(pipeline).__name__)
+
+# Create and set logger
+
+fn = Freenect2()
+num_devices = fn.enumerateDevices()
+if num_devices == 0:
+    print("No device connected!")
+    sys.exit(1)
+
+serial1 = fn.getDeviceSerialNumber(0)
+device = fn.openDevice(serial1, pipeline=pipeline)
+
+listener = SyncMultiFrameListener( FrameType.Color | FrameType.Ir | FrameType.Depth)
+
+# Register listeners
+device.setColorFrameListener(listener)
+device.setIrAndDepthFrameListener(listener)
+
+device.start()
+
+while True:
+    e1 = cv2.getTickCount()
+    frames = listener.waitForNewFrame()
+    color = frames["color"]
+    frame = color.asarray()
+    frame = cv2.flip(frame, 1)
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    detections, dimg = detector.detect(gray, return_image=True)
+
+    num_detections = len(detections)
+    print ('Detected {} tags.\n'.format(num_detections))
+
+    for i, detection in enumerate(detections):
+        print ('Detection {} of {}:'.format(i + 1, num_detections))
+        print
+        print (detection.tostring(indent=2))
+        print
+        ser123.write(b'003')
+	#yaya = detection.tostring()
+	#print (yaya.split("ID: ",1)[1] )
+
+    overlay = frame / 2 + dimg[:, :, None] / 2
+
+    cv2.imshow("April Tag", cv2.resize(overlay,(int(1920 / 3), int(1080 / 3))))
+    #cv2.imshow("color", cv2.resize(color.asarray(),(int(1920 / 3), int(1080 / 3))))
+
+    listener.release(frames)
+    e2 = cv2.getTickCount()
+    time = (e2 - e1)/ cv2.getTickFrequency()
+    print(time)
+    key = cv2.waitKey(delay=1)
+    if key == ord('q'):
+        break
+
+device.stop()
+device.close()
+
+sys.exit(0)
+
